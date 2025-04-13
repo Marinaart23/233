@@ -3,56 +3,164 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
-    <title>Рисуй как в Procreate</title>
+    <title>ProCanvas</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; }
-        canvas { display: block; position: fixed; top: 0; left: 0; touch-action: none; }
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background: #000; 
+            touch-action: none; 
+            font-family: -apple-system, sans-serif;
+        }
+        canvas { 
+            display: block; 
+            position: fixed; 
+            top: 0; 
+            left: 0; 
+            z-index: 1;
+        }
+        #ui {
+            position: fixed;
+            bottom: 20px;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            z-index: 2;
+        }
+        button {
+            padding: 12px 24px;
+            background: rgba(30, 30, 30, 0.9);
+            color: white;
+            border: none;
+            border-radius: 50px;
+            font-size: 17px;
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            cursor: pointer;
+        }
+        #saveBtn {
+            background: rgba(0, 122, 255, 0.9);
+        }
     </style>
 </head>
 <body>
     <canvas id="canvas"></canvas>
+    <div id="ui">
+        <button id="clearBtn">Очистить</button>
+        <button id="saveBtn">Сохранить</button>
+    </div>
+
     <script>
         // 1. Настройка Canvas
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-        ctx.strokeStyle = '#FFFFFF';
-        ctx.lineWidth = 3;
-        ctx.lineCap = 'round';
+        let scale = 1;
+        let offsetX = 0;
+        let offsetY = 0;
+        
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.scale(scale, scale);
+            ctx.translate(offsetX, offsetY);
+        }
+        resizeCanvas();
 
-        // 2. Рисование (Apple Pencil + пальцы)
+        // 2. Рисование (Apple Pencil)
         let isDrawing = false;
         let lastX = 0;
         let lastY = 0;
 
         canvas.addEventListener('pointerdown', (e) => {
             isDrawing = true;
-            [lastX, lastY] = [e.clientX, e.clientY];
+            lastX = (e.clientX - offsetX) / scale;
+            lastY = (e.clientY - offsetY) / scale;
             ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 3 / scale;
+            ctx.lineCap = 'round';
         });
 
         canvas.addEventListener('pointermove', (e) => {
             if (!isDrawing) return;
-            ctx.lineTo(e.clientX, e.clientY);
+            const x = (e.clientX - offsetX) / scale;
+            const y = (e.clientY - offsetY) / scale;
+            
+            ctx.lineTo(x, y);
             ctx.stroke();
-            [lastX, lastY] = [e.clientX, e.clientY];
+            lastX = x;
+            lastY = y;
         });
 
         canvas.addEventListener('pointerup', () => isDrawing = false);
 
-        // 3. Сохранение при закрытии
-        window.addEventListener('beforeunload', () => {
-            localStorage.setItem('drawing', canvas.toDataURL());
+        // 3. Масштабирование и перемещение
+        let startDist = 0;
+        let startScale = 1;
+        let startX1, startY1, startX2, startY2;
+
+        canvas.addEventListener('gesturestart', (e) => {
+            e.preventDefault();
+            startDist = Math.hypot(
+                e.touches[0].clientX - e.touches[1].clientX,
+                e.touches[0].clientY - e.touches[1].clientY
+            );
+            startScale = scale;
+            [startX1, startY1] = [e.touches[0].clientX, e.touches[0].clientY];
+            [startX2, startY2] = [e.touches[1].clientX, e.touches[1].clientY];
         });
 
-        // 4. Загрузка сохраненного
-        const saved = localStorage.getItem('drawing');
-        if (saved) {
-            const img = new Image();
-            img.src = saved;
-            img.onload = () => ctx.drawImage(img, 0, 0);
+        canvas.addEventListener('gesturechange', (e) => {
+            e.preventDefault();
+            const newDist = Math.hypot(
+                e.touches[0].clientX - e.touches[1].clientX,
+                e.touches[0].clientY - e.touches[1].clientY
+            );
+            scale = startScale * (newDist / startDist);
+            
+            const centerX = (startX1 + startX2) / 2;
+            const centerY = (startY1 + startY2) / 2;
+            offsetX = centerX - (centerX - offsetX) * (scale / startScale);
+            offsetY = centerY - (centerY - offsetY) * (scale / startScale);
+            
+            resizeCanvas();
+            redraw();
+        });
+
+        // 4. Кнопки
+        document.getElementById('clearBtn').addEventListener('click', () => {
+            ctx.clearRect(-offsetX/scale, -offsetY/scale, canvas.width/scale, canvas.height/scale);
+        });
+
+        document.getElementById('saveBtn').addEventListener('click', () => {
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = canvas.width;
+            tempCanvas.height = canvas.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.fillStyle = '#000';
+            tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+            tempCtx.drawImage(canvas, 0, 0);
+            
+            const link = document.createElement('a');
+            link.download = 'procanvas-' + new Date().toISOString().slice(0, 10) + '.png';
+            link.href = tempCanvas.toDataURL('image/png');
+            link.click();
+        });
+
+        // 5. Сохранение состояния
+        function redraw() {
+            // Для бесконечного холста нужно сохранять все линии в массив
+            // Здесь просто очищаем и рисуем заново (упрощенный вариант)
         }
+
+        window.addEventListener('resize', () => {
+            resizeCanvas();
+            redraw();
+        });
     </script>
 </body>
 </html>
