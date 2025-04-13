@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <title>3D Холст с подложкой и навигацией</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; }
+        #ui { position: absolute; top: 10px; left: 10px; z-index: 100; background: rgba(255,255,255,0.7); padding: 10px; border-radius: 5px; }
+        button { padding: 8px; margin: 4px; display: block; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <div id="ui">
+        <button id="cameraBtn">Камера (режим AR)</button>
+        <button id="imageBtn">Загрузить фото/видео</button>
+        <button id="modelBtn">3D-модель (куб)</button>
+        <button id="toggleBtn">Выключить подложку</button>
+        <button id="clearBtn">Очистить холст</button>
+    </div>
+    <input type="file" id="fileInput" accept="image/*,video/*" style="display: none;">
+    <script>
+        // 1. Настройка сцены
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xffffff);
+        
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 10;
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+        
+        // 2. Орбитальные контроллы (для навигации)
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        
+        // 3. Слои
+        const drawingLayer = new THREE.Group(); // Слой с рисунком
+        const overlayLayer = new THREE.Group(); // Слой с подложкой (фото/камера/3D)
+        scene.add(drawingLayer);
+        scene.add(overlayLayer);
+        
+        // 4. Рисование
+        let currentLine = null;
+        let isDrawing = false;
+        
+        renderer.domElement.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            isDrawing = true;
+            
+            const material = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 3 });
+            const geometry = new THREE.BufferGeometry();
+            currentLine = new THREE.Line(geometry, material);
+            drawingLayer.add(currentLine);
+        });
+        
+        renderer.domElement.addEventListener('pointermove', (e) => {
+            if (!isDrawing || !currentLine) return;
+            
+            // Преобразуем координаты мыши в 3D
+            const mouse = new THREE.Vector2(
+                (e.clientX / window.innerWidth) * 2 - 1,
+                -(e.clientY / window.innerHeight) * 2 + 1
+            );
+            
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(mouse, camera);
+            
+            // Добавляем точку в линию
+            const point = raycaster.ray.origin.clone();
+            const positions = currentLine.geometry.attributes.position?.array || [];
+            currentLine.geometry.setFromPoints([...positions, point]);
+            currentLine.geometry.attributes.position.needsUpdate = true;
+        });
+        
+        renderer.domElement.addEventListener('pointerup', () => {
+            isDrawing = false;
+            currentLine = null;
+        });
+        
+        // 5. Подложка (фото/видео/камера/3D)
+        document.getElementById('cameraBtn').addEventListener('click', async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                const video = document.createElement('video');
+                video.srcObject = stream;
+                video.play();
+                
+                const texture = new THREE.VideoTexture(video);
+                const plane = new THREE.Mesh(
+                    new THREE.PlaneGeometry(10, 10),
+                    new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide })
+                );
+                overlayLayer.add(plane);
+            } catch (err) {
+                alert("Ошибка камеры: " + err.message);
+            }
+        });
+        
+        document.getElementById('imageBtn').addEventListener('click', () => {
+            document.getElementById('fileInput').click();
+        });
+        
+        document.getElementById('fileInput').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const isVideo = file.type.includes('video');
+            const url = URL.createObjectURL(file);
+            
+            if (isVideo) {
+                const video = document.createElement('video');
+                video.src = url;
+                video.loop = true;
+                video.muted = true;
+                video.play();
+                
+                const texture = new THREE.VideoTexture(video);
+                const plane = new THREE.Mesh(
+                    new THREE.PlaneGeometry(10, 10),
+                    new THREE.MeshBasicMaterial({ map: texture })
+                );
+                overlayLayer.add(plane);
+            } else {
+                const texture = new THREE.TextureLoader().load(url);
+                const plane = new THREE.Mesh(
+                    new THREE.PlaneGeometry(10, 10),
+                    new THREE.MeshBasicMaterial({ map: texture })
+                );
+                overlayLayer.add(plane);
+            }
+        });
+        
+        document.getElementById('modelBtn').addEventListener('click', () => {
+            const geometry = new THREE.BoxGeometry(5, 5, 5);
+            const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+            const cube = new THREE.Mesh(geometry, material);
+            overlayLayer.add(cube);
+        });
+        
+        // 6. Управление подложкой
+        document.getElementById('toggleBtn').addEventListener('click', () => {
+            overlayLayer.visible = !overlayLayer.visible;
+        });
+        
+        // 7. Очистка холста
+        document.getElementById('clearBtn').addEventListener('click', () => {
+            drawingLayer.clear();
+        });
+        
+        // 8. Анимация
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update(); // Обновляем контроллы
+            renderer.render(scene, camera);
+        }
+        animate();
+        
+        // 9. Ресайз
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
